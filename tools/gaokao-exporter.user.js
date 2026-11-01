@@ -540,6 +540,8 @@
     { name: 'B', mode: 'POST', url: 'https://api-gaokao.zjzw.cn/apidata/web', uri: 'v1/school/special_score' },
   ];
   const FAST_SWITCH_EVERY = 40;   // 每 40 个请求换一次道
+  const FAST_DELAY_BASE = 250;    // 每个任务之间的基础间隔（毫秒）
+  let fastDelay = FAST_DELAY_BASE;
   let fastChannel = 0;
   let fastSinceSwitch = 0;
 
@@ -746,17 +748,24 @@
             FAST.done += 1;
             break FASTA;
           }
-          const res = await fastFetchOne(id, year, provinceId);
-          if (!res.ok) {
+          // 限流时不能当成失败跳过 —— 那样会把整个学校漏掉（之前踩过）。
+          // 冷却是「暂停后重试同一条」，最多 4 次，越退越久。
+          let res = null;
+          for (let attempt = 1; attempt <= 4; attempt += 1) {
+            res = await fastFetchOne(id, year, provinceId);
+            if (res.ok) break;
+            const isThrottle = /频繁|过多|限流/.test(res.message || '') || res.code === '1069';
+            if (!isThrottle) break;
+            throttled += 1;
+            fastDelay = Math.min(1500, fastDelay + 150);   // 被限流就整体放慢，别硬冲
+            const wait = Math.min(180, 30 * attempt);
+            log(`⚠ 被限流（${res.message}），暂停 ${wait} 秒后重试 ${meta ? meta[2] : id} ${year}（第 ${attempt}/4 次）`);
+            await sleep(wait * 1000);
+          }
+          if (!res || !res.ok) {
             FAST.failed += 1;
             FAST.done += 1;
-            if (/频繁|过多|限流/.test(res.message || '') || res.code === '1069') {
-              throttled += 1;
-              log(`⚠ 被限流（${res.message}），暂停 30 秒…`);
-              await sleep(30000);
-            } else {
-              log(`✗ ${meta ? meta[2] : id} ${year}：${res.message}`);
-            }
+            log(`✗ ${meta ? meta[2] : id} ${year}：${res ? res.message : '未知错误'}`);
             break FASTA;
           }
           // 该年接口没有数据（例如 2026 还没进公开接口）：不存空记录，只记一笔
@@ -781,7 +790,7 @@
           FAST.done += 1;
           if (FAST.done % 10 === 0) { saveState(); render(); }
         }
-        await sleep(120);
+        await sleep(fastDelay);
       }
       if (FAST.abort) break;
     }
