@@ -194,6 +194,9 @@
   state.detail = state.detail || { running: false, queue: [], index: 0, rows: {} };
   // 一分一段采集结果：{ rows: [{year,province,score,cumulative}], province, at }
   state.segFetch = state.segFetch || { rows: [] };
+  // 续跑相关：默认跳过已抓过的「校×年」；失败清单可一键重试
+  if (state.skipDone == null) state.skipDone = true;
+  if (!Array.isArray(state.detail?.failed)) state.detail.failed = [];
   // 采集范围：名次区间 + 最近几年（默认 1–100 名、最近 6 年）
   state.rankFrom = Number(state.rankFrom) || 1;
   state.rankTo = Number(state.rankTo) || 100;
@@ -514,7 +517,21 @@
     try {
       const queue = [];
       // phase: 'detail' 抓分数线；缺人数时会插入一条 phase:'plan' 补计划数
-      for (const id of ids) for (const year of years) queue.push({ id: String(id), year: String(year), phase: 'detail' });
+      // 已抓过的「校×年」默认跳过：换区间续跑时不会重复消耗请求
+      const skipDone = state.skipDone !== false;
+      let skippedDone = 0;
+      for (const id of ids) {
+        for (const year of years) {
+          const key = `${id}|${year}`;
+          if (skipDone && detailStore()[key]) { skippedDone += 1; continue; }
+          queue.push({ id: String(id), year: String(year), phase: 'detail' });
+        }
+      }
+      if (skippedDone > 0) log(`跳过已抓过的 ${skippedDone} 个「校×年」`);
+      if (queue.length === 0) {
+        log('该范围内都已抓过，没有新任务。想重抓请取消勾选「跳过已抓过的」');
+        return;
+      }
 
       // 并发分片实测走不通，已退回单页：
       //   · 站点路由会抹掉 URL 的 hash 和自定义查询参数，window.name 也会被重置，
@@ -786,6 +803,33 @@
       }
     } else {
       log(`${name} ${task.year}：没抓到数据（可能该年未公布）`);
+    }
+
+    // 空结果不能当成"已完成"直接跳过 —— 被限流时页面拿不到任何数据，
+    // 一路跳过去会把后面几十所学校全部记成"已采"，导出的表就断了（实际踩过：
+    // 天津只抓到第 81 名，后面全空）。所以连续空就暂停重试。
+    const got = data?.majors?.length ?? 0;
+    if (got === 0) {
+      state.detail.emptyStreak = (state.detail.emptyStreak || 0) + 1;
+      const maxRetry = state.emptyRetryMax ?? 3;
+      if (state.detail.emptyStreak <= maxRetry) {
+        const wait = Math.min(240, 40 * state.detail.emptyStreak);
+        log(`⚠ 连续 ${state.detail.emptyStreak} 次空结果，疑似被限流：暂停 ${wait} 秒后重试 ${name} ${task.year}`);
+        saveState();
+        render();
+        await sleep(wait * 1000);
+        gotoDetailTask();          // index 不变 → 重新加载同一页
+        return;
+      }
+      // 重试多次仍然空：记入失败清单，跳过但可一键重来
+      state.detail.failed = state.detail.failed || [];
+      if (!state.detail.failed.some((x) => x.id === task.id && x.year === task.year)) {
+        state.detail.failed.push({ id: task.id, year: task.year, name });
+      }
+      log(`✗ ${name} ${task.year}：重试 ${maxRetry} 次仍为空，记为失败（可在面板里一键重试）`);
+      state.detail.emptyStreak = 0;
+    } else {
+      state.detail.emptyStreak = 0;
     }
 
     state.detail.index += 1;
@@ -1136,12 +1180,27 @@
       } else if (state.detail.running) {
         const task = state.detail.queue[i];
         const meta = task ? schoolById.get(String(task.id)) : null;
-        detailStatus.style.color = '#9aa6bd';
-        detailStatus.textContent = `采集中 ${i + 1}/${q}：${meta ? meta[2] : task?.id ?? ''} ${task?.year ?? ''} · 已收 ${got} 组 / ${majors} 个专业`;
+        const failedCount = (state.detail.failed || []).length;
+        const streak = state.detail.emptyStreak || 0;
+        detailStatus.style.color = streak > 0 ? '#f39c12' : '#9aa6bd';
+        detailStatus.textContent = `采集中 ${i + 1}/${q}：${meta ? meta[2] : task?.id ?? ''} ${task?.year ?? ''}`
+          + ` · 已收 ${got} 组 / ${majors} 个专业`
+          + `${failedCount ? ` · 失败 ${failedCount}` : ''}`
+          + `${streak > 0 ? ` · 疑似限流重试中(${streak})` : ''}`;
       } else {
-        detailStatus.style.color = '#9aa6bd';
-        detailStatus.textContent = got ? `已收 ${got} 组「院校×年份」/ ${majors} 个专业` : '钩子正常，尚未采集';
+        const failedCount = (state.detail.failed || []).length;
+        detailStatus.style.color = failedCount ? '#f39c12' : '#9aa6bd';
+        detailStatus.textContent = got
+          ? `已收 ${got} 组「院校×年份」/ ${majors} 个专业${failedCount ? ` · 失败 ${failedCount}（点下面重试）` : ''}`
+          : '钩子正常，尚未采集';
       }
+    }
+
+    const retryBtn = panel.querySelector('.gk-retry-failed');
+    if (retryBtn) {
+      const n = (state.detail.failed || []).length;
+      retryBtn.textContent = `重试失败(${n})`;
+      retryBtn.style.opacity = n ? '1' : '0.5';
     }
   }
 
@@ -1192,6 +1251,12 @@
         <div style="display:flex;gap:6px;margin-bottom:6px;">
           <button class="gk-detail-stop" style="flex:1;padding:6px;background:#4a5568;color:#fff;border:none;border-radius:5px;cursor:pointer;">停止</button>
           <button class="gk-detail-export" style="flex:1;padding:6px;background:#1f9d55;color:#fff;border:none;border-radius:5px;cursor:pointer;">导出总表</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:11px;color:#9aa6bd;">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="checkbox" class="gk-skip-done" style="margin:0;" /> 跳过已抓过的
+          </label>
+          <button class="gk-retry-failed" style="margin-left:auto;padding:3px 8px;background:#7a4a1f;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;">重试失败(0)</button>
         </div>
         <div class="gk-detail-status" style="margin-top:6px;color:#9aa6bd;font-size:11px;margin-bottom:6px;"></div>
 
@@ -1436,6 +1501,32 @@
       const csv = buildDetailCsv();
       if (csv.split('\r\n').length <= 1) { alert('还没有专业明细数据'); return; }
       download(`高考顺_专业明细_${state.province}.csv`, csv);
+    });
+
+    // 续跑开关：默认跳过已抓过的「校×年」
+    const skipBox = $('.gk-skip-done');
+    if (skipBox) {
+      skipBox.checked = state.skipDone !== false;
+      skipBox.addEventListener('change', () => {
+        state.skipDone = skipBox.checked;
+        saveState();
+        log(skipBox.checked ? '已开启：换区间续跑时跳过抓过的' : '已关闭：会重新抓取范围内所有学校');
+      });
+    }
+
+    // 一键重试失败任务（多半是被限流时空跑掉的那些）
+    $('.gk-retry-failed').addEventListener('click', () => {
+      const failed = state.detail.failed || [];
+      if (!failed.length) { alert('没有失败的任务'); return; }
+      state.detail.queue = failed.map((f) => ({ id: String(f.id), year: String(f.year), phase: 'detail' }));
+      state.detail.index = 0;
+      state.detail.failed = [];
+      state.detail.emptyStreak = 0;
+      state.detail.running = true;
+      saveState();
+      render();
+      log(`重试 ${state.detail.queue.length} 个失败任务`);
+      gotoDetailTask();
     });
 
     $('.gk-plan-export').addEventListener('click', () => {
