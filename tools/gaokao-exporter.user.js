@@ -757,9 +757,12 @@
             const isThrottle = /频繁|过多|限流/.test(res.message || '') || res.code === '1069';
             if (!isThrottle) break;
             throttled += 1;
-            fastDelay = Math.min(1500, fastDelay + 150);   // 被限流就整体放慢，别硬冲
-            const wait = Math.min(180, 30 * attempt);
-            log(`⚠ 被限流（${res.message}），暂停 ${wait} 秒后重试 ${meta ? meta[2] : id} ${year}（第 ${attempt}/4 次）`);
+            // 一被限流就立刻换到另一条通道（两个域名的配额是分开算的），
+            // 只等很短的时间；两条都撞上了才真正退避。
+            fastChannel = (fastChannel + 1) % FAST_CHANNELS.length;
+            fastSinceSwitch = 0;
+            const wait = Math.min(90, 8 * attempt);
+            log(`⚠ 被限流（${res.message}）→ 换通道 ${FAST_CHANNELS[fastChannel].name}，等 ${wait} 秒重试 ${meta ? meta[2] : id} ${year}（第 ${attempt}/4 次）`);
             await sleep(wait * 1000);
           }
           if (!res || !res.ok) {
