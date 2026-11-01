@@ -29,6 +29,7 @@
       <button class="tab is-active" data-tab="market" role="tab">大盘</button>
       <button class="tab" data-tab="plate" role="tab">板块</button>
       <button class="tab" data-tab="stock" role="tab">个股</button>
+      <button class="tab" data-tab="heat" role="tab">热度</button>
       <a class="tab tab-link" href="help.html" target="_blank" rel="noopener">说明</a>
     </nav>
     <div class="header-actions">
@@ -195,6 +196,35 @@
         <div class="empty-state" id="emptyState">
           <p class="empty-title">还没有数据</p>
           <p class="empty-desc">点击右上角「加载数据」，选择存放 Excel/CSV 的根目录。<br>也可以点「模板」下载填写模板。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 热度（整页） ============ -->
+    <section class="tab-content" id="heat-content">
+      <div class="heat-page">
+        <div class="heat-side">
+          <h2 class="panel-title">全省专业热度榜</h2>
+          <div class="field">
+            <label for="heat-province">招生省份</label>
+            <select id="heat-province"></select>
+          </div>
+          <div class="field">
+            <label for="heat-year">年份</label>
+            <select id="heat-year"></select>
+          </div>
+          <div class="field">
+            <label for="heat-sort">排序</label>
+            <select id="heat-sort">
+              <option value="hot">最热门</option>
+              <option value="cold">最冷门</option>
+              <option value="momentum">升温最快</option>
+            </select>
+          </div>
+          <p class="hint">热度 = 100 − 该专业录取位次在同省同年所有专业中的分位。位次越靠前越热。点任意一行跳到该院校的个股页。</p>
+        </div>
+        <div class="heat-main">
+          <div class="data-list" id="heat-data-list"></div>
         </div>
       </div>
     </section>

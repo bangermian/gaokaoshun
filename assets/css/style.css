@@ -607,3 +607,82 @@ textarea::placeholder { color: #b6bbc2; }
   .quote-price { font-size: 17px; }
   .quote-bar { gap: 4px 12px; }
 }
+
+/* ---------------- 热度榜 ---------------- */
+.heat-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+.heat-row:hover { background: #f7f8fa; }
+.heat-row .data-year { color: var(--muted); text-align: right; }
+.heat-row b { font-weight: 600; }
+.heat-row .data-meta { color: var(--muted); white-space: nowrap; }
+/* ---------------- 热度页（整页布局） ---------------- */
+/* 热度页横跨两栏：进了这个页，左侧栏和图表区都让位 */
+.app-main:has(#heat-content.is-active) .sidebar,
+.app-main:has(#heat-content.is-active) .chart-area { display: none; }
+
+#heat-content.is-active {
+  display: block;
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.heat-page {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 10px;
+}
+
+.heat-side {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.heat-main {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px 10px;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+}
+
+.heat-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 6px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+}
+.heat-row:hover { background: var(--panel-alt); }
+.heat-row .data-year { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.heat-row .data-text { min-width: 0; }
+.heat-row b { font-weight: 600; }
+.heat-row .data-meta { color: var(--muted); white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .heat-page { grid-template-columns: 1fr; }
+}

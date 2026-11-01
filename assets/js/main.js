@@ -8,7 +8,7 @@
  */
 
 import { buildMajorSeries, detectOutliers, toCandles } from './aggregate.js';
-import { majorHeat } from './heat.js';
+import { majorHeat, rankMajorsByHeat, rankMajorsByMomentum } from './heat.js';
 import { ruankeOf } from './ruanke.js';
 import { createChartController } from './charts.js';
 import { ACCEPTED_EXT, DEFAULT_MA, REGION_LABELS, PLATE_LABELS, REGIONS, regionOfProvince } from './config.js';
@@ -462,10 +462,108 @@ function seriesRows(series) {
     }));
 }
 
+/* ============================ 热度榜 ============================ */
+
+/** 可选省份：只列出真的有专业位次数据的省 */
+function heatProvinces() {
+  const set = new Set();
+  for (const item of Object.values(state.schools ?? {})) {
+    if (item.province) set.add(item.province);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+}
+
+/** 可选年份：该省有数据的年份，降序 */
+function heatYears(province) {
+  const set = new Set();
+  for (const item of Object.values(state.schools ?? {})) {
+    if (item.province !== province) continue;
+    for (const recs of Object.values(item.majors ?? {})) {
+      for (const r of recs) if (Number.isFinite(Number(r.year))) set.add(Number(r.year));
+    }
+  }
+  return [...set].sort((a, b) => b - a);
+}
+
+function renderHeatTab() {
+  const provSel = $('heat-province');
+  const yearSel = $('heat-year');
+  const sortSel = $('heat-sort');
+  const listEl = $('heat-data-list');
+  if (!provSel || !yearSel || !listEl) return;
+
+  const provinces = heatProvinces();
+  const prevProvince = provSel.value;
+  provSel.innerHTML = provinces.map((p) => `<option value="${p}">${p}</option>`).join('');
+  if (provinces.includes(prevProvince)) provSel.value = prevProvince;
+  else if (state.province && provinces.includes(state.province)) provSel.value = state.province;
+  if (!provSel.value && provinces.length) provSel.value = provinces[0];
+
+  const province = provSel.value;
+  const years = heatYears(province);
+  const prevYear = yearSel.value;
+  yearSel.innerHTML = years.map((y) => `<option value="${y}">${y}</option>`).join('');
+  if (years.map(String).includes(prevYear)) yearSel.value = prevYear;
+  if (!yearSel.value && years.length) yearSel.value = String(years[0]);
+
+  const year = Number(yearSel.value);
+  const mode = sortSel?.value ?? 'hot';
+
+  if (!province || !Number.isFinite(year)) {
+    listEl.innerHTML = '<p class="empty-desc">还没有数据。</p>';
+    return;
+  }
+
+  let rows = [];
+  if (mode === 'momentum') {
+    rows = rankMajorsByMomentum(state, province, year, 50);
+  } else {
+    rows = rankMajorsByHeat(state, province, year, 200);
+    if (mode === 'cold') rows = rows.slice().reverse().slice(0, 50);
+    else rows = rows.slice(0, 50);
+  }
+
+  if (!rows.length) {
+    listEl.innerHTML = `<p class="empty-desc">${province} ${year} 年还没有可比较的专业位次数据。</p>`;
+    return;
+  }
+
+  const items = rows.map((r, i) => {
+    const delta = Number.isFinite(r.delta) ? (r.delta >= 0 ? ` · 升温 +${r.delta.toFixed(1)}` : ` · 降温 ${r.delta.toFixed(1)}`) : '';
+    const vol = Number.isFinite(r.volume) ? ` · 招生 ${formatNumber(r.volume)}` : '';
+    const heatText = mode === 'momentum'
+      ? `${r.heat.toFixed(1)}${delta}`
+      : r.heat.toFixed(1);
+    return `<button class="data-row heat-row" type="button" data-school="${encodeURIComponent(r.school)}" data-major="${encodeURIComponent(r.major)}">`
+      + `<span class="data-year">${i + 1}</span>`
+      + `<span class="data-text"><b>${r.school}</b> · ${r.major}</span>`
+      + `<span class="data-meta">热度 ${heatText} · 位次 ${formatNumber(r.rank)}${vol}</span>`
+      + '</button>';
+  });
+
+  listEl.innerHTML = items.join('');
+  listEl.querySelectorAll('.heat-row').forEach((el) => {
+    el.addEventListener('click', () => {
+      const school = decodeURIComponent(el.dataset.school);
+      const major = decodeURIComponent(el.dataset.major);
+      // 跳到个股页并定位到该校该专业
+      const schoolInput = $('stock-school');
+      const provInput = $('stock-province');
+      if (schoolInput) schoolInput.value = school;
+      if (provInput) provInput.value = province;
+      view.major = major;
+      const tab = document.querySelector('.tab[data-tab="stock"]');
+      if (tab) tab.click();
+      renderStockTab();
+    });
+  });
+}
+
 function renderActive() {
   updateStatusCount();
   if (view.tab === 'market') renderMarketTab();
   else if (view.tab === 'plate') renderPlateTab();
+  else if (view.tab === 'heat') renderHeatTab();
   else renderStockTab();
 }
 
@@ -1111,6 +1209,7 @@ function bindEvents() {
   });
 
   ['marketSelect'].forEach((id) => $(id)?.addEventListener('change', renderMarketTab));
+  ['heat-province', 'heat-year', 'heat-sort'].forEach((id) => $(id)?.addEventListener('change', renderHeatTab));
   $('plate-province')?.addEventListener('change', () => { syncPlateFilters('province'); renderPlateTab(); });
   $('plate-region')?.addEventListener('change', () => { syncPlateFilters('region'); renderPlateTab(); });
   $('plate-type')?.addEventListener('change', renderPlateTab);

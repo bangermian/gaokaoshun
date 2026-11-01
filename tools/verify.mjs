@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import {
   aggregateMajors, csvCell, csvRow, parseArgs, parseCsv,
 } from './crawl.mjs';
-import { buildRankDistribution, heatOfRank, majorHeat, percentileOf, rankMajorsByHeat } from '../assets/js/heat.js';
+import { buildRankDistribution, heatOfRank, majorHeat, percentileOf, rankMajorsByHeat, rankMajorsByMomentum } from '../assets/js/heat.js';
 import {
   attachPercentiles, detectOutliers, movingAverage, quantile, toCandles, yearlyAggregate,
 } from '../assets/js/aggregate.js';
@@ -680,6 +680,25 @@ test('热度：榜单按热度从高到低排', () => {
   assert.equal(list.length, 3);
   assert.equal(list[0].major, '计算机');
   assert.equal(list[2].major, '化学');
+});
+
+test('热度：升温榜按热度变化排序，缺年份的不参与', () => {
+  const state = createState();
+  applyRecords(state, [
+    // A 计算机：2023 位次 200 → 2025 位次 100（变热）
+    // 2023 时数学更难（200），计算机较易（300）；到 2025 反转
+    { year: 2023, school: 'A', province: '天津', location: '天津', plate: 's11', major: '计算机', highRank: null, lowRank: 300, lowScore: 660, highScore: 660, volume: 10 },
+    { year: 2023, school: 'B', province: '天津', location: '天津', plate: 's11', major: '数学', highRank: null, lowRank: 200, lowScore: 680, highScore: 680, volume: 10 },
+    { year: 2025, school: 'A', province: '天津', location: '天津', plate: 's11', major: '计算机', highRank: null, lowRank: 100, lowScore: 700, highScore: 700, volume: 10 },
+    { year: 2025, school: 'B', province: '天津', location: '天津', plate: 's11', major: '数学', highRank: null, lowRank: 900, lowScore: 620, highScore: 620, volume: 10 },
+    { year: 2025, school: 'A', province: '天津', location: '天津', plate: 's11', major: '化学', highRank: null, lowRank: 500, lowScore: 650, highScore: 650, volume: 10 },
+  ]);
+  const list = rankMajorsByMomentum(state, '天津', 2025, 10);
+  // 化学只有 2025 数据，没有基年，不应出现
+  assert.equal(list.length, 2);
+  assert.equal(list[0].major, '计算机');
+  assert.ok(list[0].delta > 0, '计算机应升温');
+  assert.ok(list[1].delta < 0, '数学应降温');
 });
 
 /* ------------------------------ 执行 ------------------------------ */

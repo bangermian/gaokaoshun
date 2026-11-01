@@ -129,3 +129,50 @@ export function rankMajorsByHeat(state, province, year, limit = 50) {
   }
   return out.sort((a, b) => b.heat - a.heat).slice(0, limit);
 }
+
+/**
+ * 升温最快：最近 3 年（含指定年份）里，最早一年到指定年份的热度变化。
+ * 只统计两个年份都有位次的专业，样本不足的直接跳过。
+ */
+export function rankMajorsByMomentum(state, province, year, limit = 50) {
+  const ranksNow = buildRankDistribution(state, province, year);
+  if (ranksNow.length < 2) return [];
+
+  const years = new Set();
+  for (const item of Object.values(state.schools ?? {})) {
+    if (item.province !== province) continue;
+    for (const recs of Object.values(item.majors ?? {})) {
+      for (const r of recs) years.add(Number(r.year));
+    }
+  }
+  const window = [...years].filter((y) => Number.isFinite(y) && y <= Number(year)).sort((a, b) => a - b).slice(-3);
+  if (window.length < 2) return [];
+  const baseYear = window[0];
+  const ranksBase = buildRankDistribution(state, province, baseYear);
+  if (ranksBase.length < 2) return [];
+
+  const out = [];
+  for (const item of Object.values(state.schools ?? {})) {
+    if (item.province !== province) continue;
+    for (const [major, recs] of Object.entries(item.majors ?? {})) {
+      const now = recs.find((x) => Number(x.year) === Number(year));
+      const before = recs.find((x) => Number(x.year) === baseYear);
+      if (!now || !before) continue;
+      if (!Number.isFinite(now.lowRank) || !Number.isFinite(before.lowRank)) continue;
+      const hNow = heatOfRank(ranksNow, now.lowRank);
+      const hBefore = heatOfRank(ranksBase, before.lowRank);
+      if (hNow == null || hBefore == null) continue;
+      out.push({
+        school: item.school,
+        major,
+        heat: hNow,
+        delta: round2(hNow - hBefore),
+        rank: now.lowRank,
+        volume: now.volume ?? null,
+        year,
+        baseYear,
+      });
+    }
+  }
+  return out.sort((a, b) => b.delta - a.delta).slice(0, limit);
+}
