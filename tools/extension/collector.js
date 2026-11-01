@@ -511,6 +511,221 @@
 
   const DETAIL_GAP = 400;      // 两所学校之间只歇 0.4s，整体快一倍多
 
+  /*
+   * 极速抓取：直接在页面里调免签名的分数线接口，不打开任何页面。
+   *
+   * 为什么快：不需要整页加载，也不需要点分页器——一个请求 80ms 左右，
+   * 一页 10 条，翻页就是换个 page 参数。几百所学校几分钟跑完。
+   *
+   * 边界：这个接口只有分数线和院校线；招生计划（人数）走的是另一个要签名的
+   * 接口，page≥2 拿不到，所以这里出的人数只有站点公开的那些年（2024/2025）。
+   * 缺人数的年份仍可再用「一键抓取」补。
+   */
+  const FAST_API = 'https://api.zjzw.cn/web/api/';
+  const FAST_PAGE_SIZE = 10;
+  const FAST = { running: false, abort: false, done: 0, total: 0, rows: 0, failed: 0, label: '' };
+
+  const provinceIdOf = (name) => {
+    const hit = PROVINCES.find((p) => p[0] === name);
+    return hit ? hit[1] : null;
+  };
+
+  /*
+   * 同一份分数线数据有两个入口，实测都能用：
+   *   渠道 A：GET  api.zjzw.cn/web/api/?uri=apidata/api/gk/score/special
+   *   渠道 B：POST api-gaokao.zjzw.cn/apidata/web { uri: 'v1/school/special_score' }
+   * 两个域名的配额是分开算的，所以轮换着用能把吞吐拉高，撞限流时也能换道继续。
+   */
+  const FAST_CHANNELS = [
+    { name: 'A', mode: 'GET', url: FAST_API, uri: 'apidata/api/gk/score/special' },
+    { name: 'B', mode: 'POST', url: 'https://api-gaokao.zjzw.cn/apidata/web', uri: 'v1/school/special_score' },
+  ];
+  const FAST_SWITCH_EVERY = 40;   // 每 40 个请求换一次道
+  let fastChannel = 0;
+  let fastSinceSwitch = 0;
+
+  /** 抓一页分数线；返回 { ok, items, found, message } */
+  async function fetchScorePage(provinceId, schoolId, year, page) {
+    const ch = FAST_CHANNELS[fastChannel];
+    const params = {
+      local_province_id: String(provinceId),
+      page: String(page),
+      school_id: String(schoolId),
+      size: String(FAST_PAGE_SIZE),
+      uri: ch.uri,
+      year: String(year),
+    };
+    try {
+      let json;
+      if (ch.mode === 'GET') {
+        const resp = await fetch(`${ch.url}?${new URLSearchParams(params)}`, { cache: 'no-store' });
+        json = await resp.json();
+      } else {
+        const resp = await fetch(ch.url, {
+          method: 'POST',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            autosign: '', like_spname: '', local_batch_id: '', local_province_id: params.local_province_id,
+            local_type_id: '', page: Number(page), platform: '2', school_id: params.school_id,
+            sg_xuanke: '', signsafe: '', size: FAST_PAGE_SIZE, special_group: '',
+            uri: ch.uri, year: params.year,
+          }),
+        });
+        json = await resp.json();
+      }
+      fastSinceSwitch += 1;
+      if (fastSinceSwitch >= FAST_SWITCH_EVERY) { fastSinceSwitch = 0; fastChannel = (fastChannel + 1) % FAST_CHANNELS.length; }
+      const okCode = json && (json.code === '0000' || json.code === 0);
+      if (okCode) {
+        return { ok: true, items: json.data?.item ?? [], found: Number(json.data?.numFound) || 0, channel: ch.name };
+      }
+      // 这个渠道不行就换另一个再试一次
+      const other = (fastChannel + 1) % FAST_CHANNELS.length;
+      if (other !== fastChannel) {
+        fastChannel = other;
+        return { ok: false, message: String(json?.message ?? json?.code ?? 'unknown'), code: String(json?.code ?? ''), switched: true };
+      }
+      return { ok: false, message: String(json?.message ?? json?.code ?? 'unknown'), code: String(json?.code ?? '') };
+    } catch (e) {
+      return { ok: false, message: e.message, code: 'NET' };
+    }
+  }
+
+  /** 极速抓取得到的一批条目 → 按专业大类聚合（口径与插件其它地方一致） */
+  function aggregateFastItems(items) {
+    const groups = new Map();
+    for (const it of items) {
+      const batchName = String(it.local_batch_name ?? '');
+      if (batchName && !/本科/.test(batchName)) continue;   // 提前批单独一条线，不能混
+      const name = String(it.sp_name ?? '').split(/[（(]/)[0].trim() || '（未命名专业）';
+      const num = (v) => {
+        if (v == null || v === '-' || v === '') return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      const min = num(it.min);
+      const max = num(it.max);
+      const rank = num(it.min_section);
+      const lq = num(it.lq_num);
+
+      let g = groups.get(name);
+      if (!g) {
+        g = { major: name, minScore: null, maxScore: null, minRank: null, maxRank: null, volume: null, hasVolume: false };
+        groups.set(name, g);
+      }
+      if (min != null) g.minScore = g.minScore == null ? min : Math.min(g.minScore, min);
+      if (max != null) g.maxScore = g.maxScore == null ? max : Math.max(g.maxScore, max);
+      if (rank != null) g.minRank = g.minRank == null ? rank : Math.max(g.minRank, rank);
+      if (lq != null) { g.volume = (g.volume || 0) + lq; g.hasVolume = true; }
+    }
+    return [...groups.values()].map((g) => ({
+      major: g.major,
+      minScore: g.minScore,
+      maxScore: g.maxScore,
+      minRank: g.minRank,
+      maxRank: null,
+      volume: g.hasVolume ? g.volume : null,
+      group: '',
+      xuanke: '',
+      variants: 1,
+    }));
+  }
+
+  /** 抓一个「校×年」的全部专业（自动翻完所有页） */
+  async function fastFetchOne(schoolId, year, provinceId) {
+    const first = await fetchScorePage(provinceId, schoolId, year, 1);
+    if (!first.ok) return { ok: false, message: first.message, code: first.code };
+
+    const items = [...first.items];
+    const pages = Math.max(1, Math.ceil((first.found || items.length) / FAST_PAGE_SIZE));
+    for (let p = 2; p <= pages; p += 1) {
+      await sleep(90);
+      const more = await fetchScorePage(provinceId, schoolId, year, p);
+      if (!more.ok) break;
+      items.push(...more.items);
+    }
+    return { ok: true, items };
+  }
+
+  /** 极速抓取主循环 */
+  async function runFastFetch() {
+    if (FAST.running) { log('极速抓取已在运行'); return; }
+    const ids = selectedSchools().map((s) => String(s[1]));
+    const years = selectedYears().map(String);
+    const provinceId = provinceIdOf(state.province);
+    if (!ids.length || !years.length) { log('先选好名次范围和年份'); return; }
+    if (!provinceId) { log(`不认识的省份：${state.province}`); return; }
+
+    FAST.running = true;
+    FAST.abort = false;
+    FAST.done = 0;
+    FAST.failed = 0;
+    FAST.rows = 0;
+    FAST.total = ids.length * years.length;
+    log(`极速抓取开始：${ids.length} 所 × ${years.length} 年 = ${FAST.total} 个任务（省份 ${state.province}/${provinceId}）`);
+
+    let throttled = 0;
+    for (const id of ids) {
+      for (const year of years) {
+        if (FAST.abort) break;
+        const key = `${id}|${year}`;
+        const meta = schoolById.get(id);
+        FASTA: {
+          if (state.skipDone !== false && detailStore()[key]) {
+            FAST.done += 1;
+            break FASTA;
+          }
+          const res = await fastFetchOne(id, year, provinceId);
+          if (!res.ok) {
+            FAST.failed += 1;
+            FAST.done += 1;
+            if (/频繁|过多|限流/.test(res.message || '') || res.code === '1069') {
+              throttled += 1;
+              log(`⚠ 被限流（${res.message}），暂停 30 秒…`);
+              await sleep(30000);
+            } else {
+              log(`✗ ${meta ? meta[2] : id} ${year}：${res.message}`);
+            }
+            break FASTA;
+          }
+          // 该年接口没有数据（例如 2026 还没进公开接口）：不存空记录，只记一笔
+          if (!res.items.length) {
+            FAST.done += 1;
+            if (!FAST.emptyYears) FAST.emptyYears = new Set();
+            FAST.emptyYears.add(String(year));
+            break FASTA;
+          }
+          const majors = aggregateFastItems(res.items);
+          detailStore()[key] = {
+            id,
+            name: meta ? meta[2] : `学校${id}`,
+            location: meta ? meta[3] : '',
+            plate: meta ? meta[4] : '',
+            year: String(year),
+            province: state.province,
+            majors,
+            school: [],
+          };
+          FAST.rows += majors.length;
+          FAST.done += 1;
+          if (FAST.done % 10 === 0) { saveState(); render(); }
+        }
+        await sleep(120);
+      }
+      if (FAST.abort) break;
+    }
+
+    FAST.running = false;
+    saveState();
+    render();
+    log(`极速抓取结束：${FAST.done}/${FAST.total} 个任务，${FAST.rows} 个专业，失败 ${FAST.failed}${throttled ? `，被限流 ${throttled} 次` : ''}`);
+    if (FAST.emptyYears && FAST.emptyYears.size) {
+      log(`这些年份接口没数据：${[...FAST.emptyYears].join('、')}（2026 只能走页面「一键抓取」）`);
+    }
+    log('提示：人数只有 2024/2025 是站点公开的；其它年份可再用「一键抓取」补计划数。');
+  }
+
   const detailStore = () => state.detail.rows || (state.detail.rows = {});
   const provincelineUrl = (id, year) => `https://www.gaokao.cn/school/${id}/provinceline?year=${year}`;
 
@@ -1248,6 +1463,7 @@
         </label>
         <div class="gk-range-hint" style="color:#6b7793;font-size:10px;margin-bottom:6px;"></div>
 
+        <button class="gk-fast" style="width:100%;padding:9px;background:#1f6feb;color:#fff;border:none;border-radius:5px;font-weight:700;font-size:13px;cursor:pointer;margin-bottom:6px;">极速抓取（不打开页面）</button>
         <button class="gk-onestep" style="width:100%;padding:9px;background:#ec0000;color:#fff;border:none;border-radius:5px;font-weight:700;font-size:13px;cursor:pointer;margin-bottom:6px;">一键抓取</button>
         <div style="display:flex;gap:6px;margin-bottom:6px;">
           <button class="gk-detail-stop" style="flex:1;padding:6px;background:#4a5568;color:#fff;border:none;border-radius:5px;cursor:pointer;">停止</button>
@@ -1494,9 +1710,12 @@
       startDetailQueue(list.map((s) => String(s[1])), selectedYears());
     });
 
+    $('.gk-fast').addEventListener('click', () => { runFastFetch(); });
+
     $('.gk-detail-stop').addEventListener('click', () => {
+      FAST.abort = true;
       stopDetailQueue();
-      log('已停止专业明细采集');
+      log('已停止采集（极速抓取会在当前任务后停下）');
     });
 
     $('.gk-detail-export').addEventListener('click', () => {
