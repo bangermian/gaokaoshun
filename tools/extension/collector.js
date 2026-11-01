@@ -1252,6 +1252,7 @@
         <div style="display:flex;gap:6px;margin-bottom:6px;">
           <button class="gk-detail-stop" style="flex:1;padding:6px;background:#4a5568;color:#fff;border:none;border-radius:5px;cursor:pointer;">停止</button>
           <button class="gk-detail-export" style="flex:1;padding:6px;background:#1f9d55;color:#fff;border:none;border-radius:5px;cursor:pointer;">导出总表</button>
+          <button class="gk-detail-push" style="flex:1;padding:6px;background:#2f6fd0;color:#fff;border:none;border-radius:5px;cursor:pointer;">导出并导入</button>
         </div>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:11px;color:#9aa6bd;">
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
@@ -1503,7 +1504,20 @@
       if (csv.split('\r\n').length <= 1) { alert('还没有专业明细数据'); return; }
       download(`高考顺_专业明细_${state.province}.csv`, csv);
     });
-
+    /*
+     * 导出并自动导入：
+     *   浏览器不允许 HTTPS 页面（www.gaokao.cn）直接写本地文件，也不允许它
+     *   fetch http://127.0.0.1（混合内容 / 私有网络访问限制，实测被静默拦截）。
+     *   所以这里只负责"下载"，由本地看护进程（导入数据.cmd）发现下载目录里的
+     *   新文件并自动合并进 data/。既不改浏览器设置，也不用申请额外权限。
+     */
+    $('.gk-detail-push').addEventListener('click', () => {
+      const csv = buildDetailCsv();
+      if (csv.split('\r\n').length <= 1) { alert('还没有专业明细数据'); return; }
+      const fileName = `高考顺_专业明细_${state.province}.csv`;
+      download(fileName, csv);
+      log(`已导出 ${fileName}。如果开着「导入数据.cmd」，几秒后会自动写入 data/；没开就手动拖进去。`);
+    });
     // 续跑开关：默认跳过已抓过的「校×年」
     const skipBox = $('.gk-skip-done');
     if (skipBox) {
