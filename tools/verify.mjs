@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   aggregateMajors, csvCell, csvRow, parseArgs, parseCsv,
 } from './crawl.mjs';
+import { buildRankDistribution, heatOfRank, majorHeat, percentileOf, rankMajorsByHeat } from '../assets/js/heat.js';
 import {
   attachPercentiles, detectOutliers, movingAverage, quantile, toCandles, yearlyAggregate,
 } from '../assets/js/aggregate.js';
@@ -632,6 +633,53 @@ test('抓取：命令行参数解析与钳制', () => {
   const b = parseArgs(['--from', '10', '--to', '3']);
   assert.equal(b.to, 10);                   // to < from 时纠正
   assert.equal(b.concurrency, 4);           // 默认值
+});
+
+/* ------------------------------ 专业热度 ------------------------------ */
+
+function heatState() {
+  const state = createState();
+  applyRecords(state, [
+    { year: 2025, school: 'A', province: '天津', location: '天津', plate: 's11', major: '计算机', highRank: null, lowRank: 100, lowScore: 700, highScore: 700, volume: 10 },
+    { year: 2025, school: 'A', province: '天津', location: '天津', plate: 's11', major: '化学', highRank: null, lowRank: 900, lowScore: 650, highScore: 650, volume: 10 },
+    { year: 2025, school: 'B', province: '天津', location: '天津', plate: 's11', major: '数学', highRank: null, lowRank: 500, lowScore: 680, highScore: 680, volume: 10 },
+  ]);
+  return state;
+}
+
+test('热度：位次分位按全省同年的专业分布算', () => {
+  const state = heatState();
+  const ranks = buildRankDistribution(state, '天津', 2025);
+  assert.deepEqual(ranks, [100, 500, 900]);
+  // 100 前面没有更小的 → 分位 0 → 热度 100
+  assert.equal(percentileOf(ranks, 100), 0);
+  assert.equal(heatOfRank(ranks, 100), 100);
+  assert.equal(heatOfRank(ranks, 500), 66.67);
+  assert.equal(heatOfRank(ranks, 900), 33.33);
+});
+
+test('热度：样本不足时返回 null，不瞎猜', () => {
+  const state = createState();
+  applyRecords(state, [{ year: 2025, school: 'A', province: '天津', location: '天津', plate: 's11', major: '计算机', highRank: null, lowRank: 100, lowScore: 700, highScore: 700, volume: 10 }]);
+  assert.equal(heatOfRank(buildRankDistribution(state, '天津', 2025), 100), null);
+});
+
+test('热度：校内溢价为正说明该专业比本校平均更难进', () => {
+  const state = heatState();
+  const hot = majorHeat(state, { school: 'A', province: '天津', year: 2025, major: '计算机' });
+  const cold = majorHeat(state, { school: 'A', province: '天津', year: 2025, major: '化学' });
+  assert.ok(hot.relHeat > 0, '计算机应比校内平均更热');
+  assert.ok(cold.relHeat < 0, '化学应比校内平均更冷');
+  assert.equal(hot.heat, 100);
+  assert.equal(cold.heat, 33.33);
+});
+
+test('热度：榜单按热度从高到低排', () => {
+  const state = heatState();
+  const list = rankMajorsByHeat(state, '天津', 2025, 10);
+  assert.equal(list.length, 3);
+  assert.equal(list[0].major, '计算机');
+  assert.equal(list[2].major, '化学');
 });
 
 /* ------------------------------ 执行 ------------------------------ */

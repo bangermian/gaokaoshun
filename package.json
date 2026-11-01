@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node tools/serve.mjs",
     "test": "node tools/verify.mjs",
-    "crawl": "node tools/crawl.mjs"
+    "crawl": "node tools/crawl.mjs",
+    "ruanke": "node tools/build-ruanke.mjs"
   },
   "engines": {
     "node": ">=18"

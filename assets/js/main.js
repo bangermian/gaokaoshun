@@ -8,6 +8,8 @@
  */
 
 import { buildMajorSeries, detectOutliers, toCandles } from './aggregate.js';
+import { majorHeat } from './heat.js';
+import { ruankeOf } from './ruanke.js';
 import { createChartController } from './charts.js';
 import { ACCEPTED_EXT, DEFAULT_MA, REGION_LABELS, PLATE_LABELS, REGIONS, regionOfProvince } from './config.js';
 import { computeIndices } from './indices.js';
@@ -402,6 +404,38 @@ function renderStockTab() {
     : buildMajorSeries(item.majors[view.major] ?? []);
 
   const name = view.major === '__all__' ? `${item.name}` : `${item.name} · ${view.major}`;
+
+  // 软科评分：按学校名查表，取最新一年
+  const rk = ruankeOf(item.school);
+  const rkEl = $('ruankeScore');
+  if (rkEl) {
+    rkEl.textContent = rk ? `${rk.score.toFixed(1)}（第 ${rk.rank}）` : '-';
+    rkEl.title = rk ? `软科 ${rk.year} 年评分` : '软科榜单里没有这所学校';
+  }
+
+  // 专业热度：只在选了具体专业时才有意义
+  const heatEl = $('majorHeat');
+  if (heatEl) {
+    if (view.major === '__all__') {
+      heatEl.textContent = '-';
+      heatEl.title = '选择一个具体专业后显示（口径是全省所有专业的位次分位）';
+    } else {
+      const latestYear = Math.max(...(item.majors[view.major] ?? []).map((r) => Number(r.year)).filter(Number.isFinite));
+      const h = Number.isFinite(latestYear)
+        ? majorHeat(state, { school: item.school, province: item.province, year: latestYear, major: view.major })
+        : null;
+      if (h && h.heat != null) {
+        const rel = h.relHeat == null ? '' : (h.relHeat >= 0 ? ` · 校内溢价 +${h.relHeat}` : ` · 校内溢价 ${h.relHeat}`);
+        const trend = h.trend == null ? '' : (h.trend >= 0 ? ` · 近三年 +${h.trend}` : ` · 近三年 ${h.trend}`);
+        heatEl.textContent = `${h.heat.toFixed(1)}${rel}${trend}`;
+        heatEl.title = `全省 ${h.samples} 个专业参与排序 · 分位 ${h.percentile}%（越小越难）`;
+      } else {
+        heatEl.textContent = '-';
+        heatEl.title = '该年位次缺失，或同省同年样本不足';
+      }
+    }
+  }
+
   const benchSeries = indexCache.benchmarks?.[`${item.province}|${item.plate}`]
     ?? indexCache.benchmarks?.[`${item.province}|all`]
     ?? [];

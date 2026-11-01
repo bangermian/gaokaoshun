@@ -132,7 +132,7 @@ export function renderDataList(containerId, rows, onDelete) {
 
 export function resetInfoBar() {
   ['currentName', 'currentPrice', 'changeRate', 'currentVolume', 'historyHigh', 'historyLow',
-    'currentDifficulty', 'relativeStrength'].forEach((id) => {
+    'currentDifficulty', 'relativeStrength', 'majorHeat', 'ruankeScore'].forEach((id) => {
     const el = $(id);
     if (el) el.textContent = '-';
   });
