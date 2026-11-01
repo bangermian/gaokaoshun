@@ -640,26 +640,53 @@ textarea::placeholder { color: #b6bbc2; }
 
 .heat-page {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: 300px 1fr;
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
   padding: 10px;
+  /* 顶栏 + 状态栏大约 96px，剩下的都留给榜单 */
+  height: calc(100vh - 96px);
+  box-sizing: border-box;
 }
 
 .heat-side {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 10px;
+  padding: 12px;
+  height: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
 }
+
+/* 下拉和输入都放大一点，原来 12px 太小 */
+.heat-side select,
+.heat-side input[type="text"],
+.heat-side input[type="number"] {
+  font-size: 13px;
+  padding: 6px 8px;
+  height: 32px;
+  box-sizing: border-box;
+}
+.heat-side .field { margin-bottom: 10px; }
+.heat-side label { font-size: 12px; }
+.heat-side .panel-title { margin-top: 0; }
 
 .heat-main {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 6px 10px 10px;
-  max-height: calc(100vh - 140px);
+  height: 100%;
+  box-sizing: border-box;
   overflow-y: auto;
+}
+
+/* .data-list 本来是给侧栏短列表用的，自带 max-height: 260px，
+   放到热度页会把榜单截断成 8 行。这里解除限制，让滚动交给外层 .heat-main。 */
+.heat-main .data-list {
+  max-height: none;
+  overflow: visible;
 }
 
 .heat-row {

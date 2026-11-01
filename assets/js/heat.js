@@ -120,6 +120,7 @@ export function rankMajorsByHeat(state, province, year, limit = 50) {
   for (const item of Object.values(state.schools ?? {})) {
     if (item.province !== province) continue;
     for (const [major, recs] of Object.entries(item.majors ?? {})) {
+      if (/^院校(最低|投档)线/.test(major)) continue;   // 学校投档线，不是专业
       const r = recs.find((x) => Number(x.year) === Number(year));
       if (!r || !Number.isFinite(r.lowRank)) continue;
       const heat = heatOfRank(ranks, r.lowRank);

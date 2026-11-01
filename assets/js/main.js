@@ -503,8 +503,24 @@ function renderHeatTab() {
   const years = heatYears(province);
   const prevYear = yearSel.value;
   yearSel.innerHTML = years.map((y) => `<option value="${y}">${y}</option>`).join('');
-  if (years.map(String).includes(prevYear)) yearSel.value = prevYear;
-  if (!yearSel.value && years.length) yearSel.value = String(years[0]);
+  if (years.map(String).includes(prevYear)) {
+    yearSel.value = prevYear;
+  } else if (years.length) {
+    // 默认选「数据最全的一年」而不是最新的一年：
+    // 最新年份往往只放出了部分学校，直接看会以为全省只有几十个专业
+    const counts = new Map(years.map((y) => [y, 0]));
+    for (const item of Object.values(state.schools ?? {})) {
+      if (item.province !== province) continue;
+      for (const recs of Object.values(item.majors ?? {})) {
+        for (const r of recs) {
+          const y = Number(r.year);
+          if (counts.has(y) && Number.isFinite(r.lowRank)) counts.set(y, counts.get(y) + 1);
+        }
+      }
+    }
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    yearSel.value = String(best ? best[0] : years[0]);
+  }
 
   const year = Number(yearSel.value);
   const mode = sortSel?.value ?? 'hot';

@@ -315,6 +315,14 @@ export function parseSheetRows(rows) {
     const major = String(row[map.major] ?? '').trim();
     if (!major) continue;
 
+    /*
+     * 采集器导出的表里，除了专业行还夹着「院校最低线（本科批A段 普通类）」这类行。
+     * 那是**学校层面的投档线**，不是一个专业 —— 当成专业会让个股下拉、热度榜、
+     * 大盘聚合全部失真（实测 12k 行里有 886 行是这种）。
+     * 院校线由应用自己按学校聚合，不需要这些行，直接跳过。
+     */
+    if (/^院校最低线/.test(major) || /^院校(最低|投档)线/.test(major)) continue;
+
     const ranks = readRankCells(row, map);
     if (!ranks) { skipped += 1; continue; }
 
