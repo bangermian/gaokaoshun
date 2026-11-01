@@ -105,7 +105,12 @@ while ($true) {
       else {
         $msg = if ($result) { $result.message } else { '未知错误' }
         Write-Host ("  [{0}] 导入失败 {1}：{2}" -f (Get-Date -Format 'HH:mm:ss'), $f.Name, $msg) -ForegroundColor Yellow
-        Write-Host '         请确认 启动.cmd 的服务器还开着。3 秒后重试。' -ForegroundColor DarkGray
+        if ($msg -match 'locked|being used|denied|EPERM') {
+          Write-Host '         数据文件正被别的程序占着（多半是 Excel 打开着）。关掉后会自动重试。' -ForegroundColor Yellow
+        }
+        else {
+          Write-Host '         请确认 启动.cmd 的服务器还开着。3 秒后重试。' -ForegroundColor DarkGray
+        }
       }
     }
   }

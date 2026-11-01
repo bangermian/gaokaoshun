@@ -173,7 +173,20 @@ function Invoke-AppendCsv([string]$BodyText, [string]$DataRoot) {
         $result.file = $target
     }
     catch {
-        $result.message = $_.Exception.Message
+        $msg = $_.Exception.Message
+        # A very common case: the CSV is open in Excel, so the write is denied.
+        # Say so plainly instead of dumping a .NET exception.
+        # PowerShell wraps the real error in a MethodInvocationException,
+        # so walk the inner chain and test the actual exception type.
+        $inner = $_.Exception
+        while ($inner.InnerException) { $inner = $inner.InnerException }
+        $isIo = ($inner -is [System.IO.IOException]) -or ($inner -is [System.UnauthorizedAccessException]) -or ($_.Exception -is [System.IO.IOException])
+        if ($isIo -or $msg -match 'being used|denied|EPERM') {
+            $result.message = 'file is locked by another program (close Excel / editor and it will retry)'
+        }
+        else {
+            $result.message = $msg
+        }
     }
     return $result
 }
