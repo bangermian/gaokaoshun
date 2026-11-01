@@ -647,6 +647,77 @@
     return { ok: true, items };
   }
 
+  /**
+   * 自查：看看当前范围内哪些数据已经采过
+   * 输出三件事：每个「校×年」有没有、人数齐不齐、建议下一步跑什么
+   */
+  function runSelfCheck() {
+    const ids = selectedSchools().map((s) => String(s[1]));
+    const years = selectedYears().map(String);
+    const rows = detailStore();
+    const total = ids.length * years.length;
+
+    const perYear = new Map();
+    let have = 0;
+    let empty = 0;
+    let miss = 0;
+    let majors = 0;
+    let withVolume = 0;
+    const missingByYear = new Map();
+
+    for (const year of years) perYear.set(year, { have: 0, empty: 0, miss: 0, majors: 0 });
+
+    for (const id of ids) {
+      for (const year of years) {
+        const rec = rows[`${id}|${year}`];
+        const n = rec?.majors?.length ?? 0;
+        const b = perYear.get(year);
+        if (n > 0) {
+          have += 1; b.have += 1; b.majors += n; majors += n;
+          for (const m of rec.majors) if (m.volume != null) withVolume += 1;
+        } else if (rec) {
+          empty += 1; b.empty += 1;
+        } else {
+          miss += 1; b.miss += 1;
+          if (!missingByYear.has(year)) missingByYear.set(year, []);
+          missingByYear.get(year).push(id);
+        }
+      }
+    }
+
+    const pct = total ? Math.round((have / total) * 100) : 0;
+    log(`自查（${state.province} · ${ids.length} 所 × ${years.length} 年 = ${total} 个「校×年」）：已采 ${have}（${pct}%），未采 ${miss}，空记录 ${empty}`);
+    log(`明细共 ${majors} 个专业，其中 ${withVolume} 个有人数（${majors ? Math.round((withVolume / majors) * 100) : 0}%），其余缺人数需要补计划`);
+
+    for (const year of years) {
+      const b = perYear.get(year);
+      let tip = '';
+      if (b.have === 0) tip = '（该年还没采）';
+      else if (b.miss === 0 && b.empty === 0) tip = '（已齐）';
+      else if (b.empty > 0) tip = `（有 ${b.empty} 条空记录）`;
+      log(`  ${year}：已采 ${b.have}/${ids.length}，${b.majors} 个专业，缺 ${b.miss}${tip}`);
+    }
+
+    // 给出下一步建议
+    const emptyYears = years.filter((y) => perYear.get(y).have === 0);
+    const partly = years.filter((y) => { const b = perYear.get(y); return b.have > 0 && b.miss > 0; });
+    if (miss === 0 && empty === 0) {
+      log('结论：这个范围内已经采齐，不用再跑。要补人数就用「一键抓取」或导出后合并。');
+    } else {
+      if (partly.length) log(`建议：${partly.join('、')} 还有缺口，直接点「极速抓取」会自动跳过已采的`);
+      if (emptyYears.length) log(`注意：${emptyYears.join('、')} 一条都没有；如果是 2026，接口没有数据，只能走页面「一键抓取」`);
+      const backfilled = years.filter((y) => perYear.get(y).empty > 0);
+      if (backfilled.length) log(`另有 ${backfilled.join('、')} 存在空记录（之前被限流空跑），可点「重试失败」清掉重采`);
+    }
+
+    // 面板上也留一句
+    const box = document.querySelector('.gk-selfcheck');
+    if (box) {
+      box.textContent = `自查：${have}/${total} 已采（${pct}%）· 缺人数 ${majors - withVolume}/${majors}`;
+      box.style.color = miss || empty ? '#f39c12' : '#1f9d55';
+    }
+    return { total, have, miss, empty, majors, withVolume };
+  }
   /** 极速抓取主循环 */
   async function runFastFetch() {
     if (FAST.running) { log('极速抓取已在运行'); return; }
@@ -1473,8 +1544,10 @@
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
             <input type="checkbox" class="gk-skip-done" style="margin:0;" /> 跳过已抓过的
           </label>
-          <button class="gk-retry-failed" style="margin-left:auto;padding:3px 8px;background:#7a4a1f;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;">重试失败(0)</button>
+          <button class="gk-selfcheck-btn" style="margin-left:auto;padding:3px 8px;background:#2f6fd0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;">自查</button>
+          <button class="gk-retry-failed" style="padding:3px 8px;background:#7a4a1f;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;">重试失败(0)</button>
         </div>
+        <div class="gk-selfcheck" style="margin-bottom:6px;font-size:11px;color:#9aa6bd;"></div>
         <div class="gk-detail-status" style="margin-top:6px;color:#9aa6bd;font-size:11px;margin-bottom:6px;"></div>
 
         <details class="gk-sec-seg" open>
@@ -1709,6 +1782,7 @@
       startDetailQueue(list.map((s) => String(s[1])), selectedYears());
     });
 
+    $('.gk-selfcheck-btn').addEventListener('click', () => { runSelfCheck(); });
     $('.gk-fast').addEventListener('click', () => { runFastFetch(); });
 
     $('.gk-detail-stop').addEventListener('click', () => {
