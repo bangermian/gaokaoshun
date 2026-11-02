@@ -831,9 +831,13 @@ async function autoLoadFromDataDir({ manual = false } = {}) {
    */
   let payload = null;
   let base = '/data/';
+  // 只认「带 files 数组」的响应：有些静态托管会把未知路径兜底成 200 + 一段 JSON，
+  // 直接当清单用会让整站加载不出来。
+  const asIndex = (body) => (body && Array.isArray(body.files) ? body : null);
+
   try {
     const resp = await fetch(DATA_INDEX_API, { cache: 'no-store' });
-    if (resp.ok) payload = await resp.json();
+    if (resp.ok) payload = asIndex(await resp.json().catch(() => null));
   } catch { /* 静态托管会 404，走清单 */ }
 
   if (!payload) {
@@ -841,8 +845,8 @@ async function autoLoadFromDataDir({ manual = false } = {}) {
       const manifestUrl = new URL('data/index.json', location.href).href;
       const resp = await fetch(manifestUrl, { cache: 'no-store' });
       if (resp.ok) {
-        payload = await resp.json();
-        base = new URL('data/', location.href).href;
+        payload = asIndex(await resp.json().catch(() => null));
+        if (payload) base = new URL('data/', location.href).href;
       }
     } catch { /* 连清单也没有，放弃 */ }
   }
