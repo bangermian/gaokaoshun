@@ -823,14 +823,30 @@ const DATA_INDEX_API = '/api/data-index';
 async function autoLoadFromDataDir({ manual = false } = {}) {
   if (location.protocol === 'file:') return false;
 
-  let payload;
+  /*
+   * 两个来源：
+   *   1) 本地服务器的 /api/data-index（能自动发现新文件）
+   *   2) 静态托管时的 data/index.json（部署前生成好的清单）
+   * 静态托管没有后端，所以必须靠清单，否则整站只能手动选目录。
+   */
+  let payload = null;
+  let base = '/data/';
   try {
     const resp = await fetch(DATA_INDEX_API, { cache: 'no-store' });
-    if (!resp.ok) return false;
-    payload = await resp.json();
-  } catch {
-    return false;   // 不是我们的服务器（比如 GitHub Pages），静默跳过
+    if (resp.ok) payload = await resp.json();
+  } catch { /* 静态托管会 404，走清单 */ }
+
+  if (!payload) {
+    try {
+      const manifestUrl = new URL('data/index.json', location.href).href;
+      const resp = await fetch(manifestUrl, { cache: 'no-store' });
+      if (resp.ok) {
+        payload = await resp.json();
+        base = new URL('data/', location.href).href;
+      }
+    } catch { /* 连清单也没有，放弃 */ }
   }
+  if (!payload) return false;
 
   // PowerShell 版服务器在只有一个文件时会序列化成对象而不是数组，这里统一成数组
   const raw = payload?.files;
@@ -847,7 +863,7 @@ async function autoLoadFromDataDir({ manual = false } = {}) {
   try {
     const files = [];
     for (const item of list) {
-      const url = `/data/${String(item.rel).split('/').map(encodeURIComponent).join('/')}`;
+      const url = base + String(item.rel).split('/').map(encodeURIComponent).join('/');
       const resp = await fetch(url, { cache: 'no-store' });
       if (!resp.ok) continue;
       const buffer = await resp.arrayBuffer();
